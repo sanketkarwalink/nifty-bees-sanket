@@ -1,0 +1,32 @@
+{
+    "symbol": "NIFTYBEES.NS",
+    "check_interval": 60,
+    "dip_percentage": 1.0,
+    "dip_from_high": 2.0,
+    "alert_sound": true,
+    "headless": true,
+    "moving_avg_period": 5,
+    "volume_spike_threshold": 1.5,
+    "consecutive_drop_threshold": 3,
+    "alert_cooldown_minutes": 5,
+    "email_alerts": true,
+    "email_config": {
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587,
+        "sender_email": "",
+        "sender_password": "",
+        "receiver_email": ""
+    },
+    "investment_config": {
+        "portfolio_amount": 0,
+        "target_allocation": 0.40,
+        "buy_on_dip": 1.5,
+        "sell_on_spike": 5.0
+    },
+    "alternative_symbols": {
+        "NIFTYBEES": "NIFTYBEES.NS",
+        "JUNIORBEES": "JUNIORBEES.NS",
+        "LIQUIDBEES": "LIQUIDBEES.NS",
+        "BANKBEES": "BANKBEES.NS"
+    }
+}
