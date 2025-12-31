@@ -18,7 +18,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Bring the app code and config (config can still be overridden by env vars)
-COPY nifty_tracker.py config.json README.md email_setup_guide.md ./
+COPY nifty_tracker.py web_runner.py config.json README.md email_setup_guide.md ./
 
 # Default to headless for server environments
 ENV HEADLESS=true
