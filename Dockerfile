@@ -23,4 +23,5 @@ COPY nifty_tracker.py config.json README.md email_setup_guide.md ./
 # Default to headless for server environments
 ENV HEADLESS=true
 
-CMD ["python", "nifty_tracker.py"]
+# Web entrypoint provides a health endpoint for Render free web service
+CMD ["python", "web_runner.py"]

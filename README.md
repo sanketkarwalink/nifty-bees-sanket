@@ -181,33 +181,32 @@ Notes
 
 ## Deploy to Render (no card) 🆓
 
-Render free Background Worker runs a long-lived process from your Dockerfile.
+Render free **Web Service** is used (worker is paid). `web_runner.py` runs the tracker in a background thread and serves `/health` for Render.
 
 1) Connect repo to Render
 
-- Push this repo to GitHub (or create a private repo). Render reads `render.yaml`.
-- In Render dashboard: "New +" → "Blueprint" → point to the repo URL.
+- Push this repo to GitHub. In Render: "New" → "Blueprint" → repo URL. Branch `main`.
 
 2) Verify `render.yaml`
 
-- Uses the existing Dockerfile, type `worker`, free plan, region `singapore`.
-- Auto-deploy is off; you can trigger deploys manually.
+- Type `web`, plan `free`, region `singapore`, healthCheckPath `/health`.
+- Auto-deploy is off; you deploy manually.
 
 3) Set environment variables (Settings → Environment)
 
 - `EMAIL_SENDER`, `EMAIL_PASSWORD`, `EMAIL_RECEIVER`, `SMTP_SERVER`, `SMTP_PORT`
 - `PORTFOLIO_AMOUNT`, `TARGET_ALLOCATION`
-- Optional: `HEADLESS=true` (defaults true in Dockerfile) and `symbol` overrides if needed.
+- Optional: `HEADLESS=true` (defaults true) and `symbol` override if needed.
 
 4) Deploy
 
-- Click "Manual Deploy" → "Deploy latest commit" for the worker service.
-- Check logs in Render dashboard to confirm tracker loop is running.
+- Click "Manual Deploy" → "Deploy latest commit" for the web service.
+- Check logs to confirm the tracker loop is running; `/health` returns 200.
 
 Notes
 
 - Keep secrets out of `config.json`; env vars override at runtime.
-- If you edit `config.json` defaults, redeploy the image; live hot-reload inside the container won’t see repo changes unless baked into the image.
+- If you change code/config defaults, deploy again to bake changes into the image.
 
 ## License
 

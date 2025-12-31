@@ -1,12 +1,12 @@
 services:
-  - type: worker
+  - type: web
     name: nifty-tracker
     env: docker
     plan: free
     autoDeploy: false
     region: singapore
     dockerfilePath: ./Dockerfile
-    healthCheckPath: null
+    healthCheckPath: /health
     envVars:
       - key: HEADLESS
         value: "true"
