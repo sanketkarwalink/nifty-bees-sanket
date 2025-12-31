@@ -12,12 +12,25 @@ def start_tracker():
 
 
 class HealthHandler(BaseHTTPRequestHandler):
+    def _respond_ok(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
     def do_GET(self):
         if self.path == "/health":
+            self._respond_ok()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_HEAD(self):
+        if self.path == "/health":
+            # Uptime monitors often send HEAD; respond 200 to avoid false downs
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
-            self.wfile.write(b"ok")
         else:
             self.send_response(404)
             self.end_headers()
