@@ -9,9 +9,7 @@ import json
 from datetime import datetime
 from plyer import notification
 import os
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import requests
 
 class NiftyTracker:
     def __init__(self, config_file='config.json'):
@@ -40,28 +38,16 @@ class NiftyTracker:
         self.consecutive_drop_threshold = config.get('consecutive_drop_threshold', 3)
         self.alert_cooldown_minutes = config.get('alert_cooldown_minutes', 5)
 
-        # Email configuration
-        self.email_alerts = config.get('email_alerts', False)
-        self.email_config = config.get('email_config', {})
-        # Environment overrides for email (avoid hardcoding secrets)
-        env_sender = os.getenv('EMAIL_SENDER')
-        env_password = os.getenv('EMAIL_PASSWORD')
-        env_receiver = os.getenv('EMAIL_RECEIVER')
-        env_smtp = os.getenv('SMTP_SERVER')
-        env_smtp_port = os.getenv('SMTP_PORT')
-        if env_sender:
-            self.email_config['sender_email'] = env_sender
-        if env_password:
-            self.email_config['sender_password'] = env_password
-        if env_receiver:
-            self.email_config['receiver_email'] = env_receiver
-        if env_smtp:
-            self.email_config['smtp_server'] = env_smtp
-        if env_smtp_port:
-            try:
-                self.email_config['smtp_port'] = int(env_smtp_port)
-            except ValueError:
-                pass
+        # Telegram configuration
+        self.telegram_alerts = config.get('telegram_alerts', False)
+        self.telegram_config = config.get('telegram_config', {})
+        # Environment overrides for Telegram (avoid hardcoding secrets)
+        env_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+        env_chat_id = os.getenv('TELEGRAM_CHAT_ID')
+        if env_bot_token:
+            self.telegram_config['bot_token'] = env_bot_token
+        if env_chat_id:
+            self.telegram_config['chat_id'] = env_chat_id
 
         # Investment configuration
         self.investment_config = config.get('investment_config', {})
@@ -103,13 +89,10 @@ class NiftyTracker:
                 'volume_spike_threshold': 1.5,  # Volume spike multiplier
                 'consecutive_drop_threshold': 3,  # Alert after N consecutive drops
                 'alert_cooldown_minutes': 5,  # Minutes between same alert types
-                'email_alerts': False,
-                'email_config': {
-                    'smtp_server': 'smtp.gmail.com',
-                    'smtp_port': 587,
-                    'sender_email': '',
-                    'sender_password': '',
-                    'receiver_email': ''
+                'telegram_alerts': True,
+                'telegram_config': {
+                    'bot_token': '',
+                    'chat_id': ''
                 },
                 'investment_config': {
                     'portfolio_amount': 100000,  # Current investment amount
@@ -163,38 +146,36 @@ class NiftyTracker:
         cooldown_seconds = self.alert_cooldown_minutes * 60
         return time_since_last >= cooldown_seconds
     
-    def send_email_alert(self, subject, body):
-        """Send email alert"""
-        if not self.email_alerts:
+    
+    def send_telegram_alert(self, message):
+        """Send Telegram alert via bot API"""
+        if not self.telegram_alerts:
             return
         
         try:
-            sender = self.email_config.get('sender_email')
-            receiver = self.email_config.get('receiver_email')
-            password = self.email_config.get('sender_password')
+            bot_token = self.telegram_config.get('bot_token')
+            chat_id = self.telegram_config.get('chat_id')
             
-            if not all([sender, receiver, password]):
+            if not all([bot_token, chat_id]):
+                print("Telegram not configured (missing bot_token or chat_id)")
                 return
             
-            msg = MIMEMultipart()
-            msg['From'] = sender
-            msg['To'] = receiver
-            msg['Subject'] = subject
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            payload = {
+                'chat_id': chat_id,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
             
-            msg.attach(MIMEText(body, 'html'))
+            response = requests.post(url, json=payload, timeout=10)
+            response.raise_for_status()
             
-            server = smtplib.SMTP(self.email_config.get('smtp_server'), self.email_config.get('smtp_port'))
-            server.starttls()
-            server.login(sender, password)
-            server.send_message(msg)
-            server.quit()
-            
-            print(f"📧 Email sent: {subject}")
+            print(f"💬 Telegram sent: {message[:50]}...")
         except Exception as e:
-            print(f"Email error: {e}")
+            print(f"Telegram error: {e}")
     
     def send_alert(self, message, title="Nifty 50 ETF Alert", alert_type="general"):
-        """Send desktop notification and email. Continues even if desktop notify fails."""
+        """Send desktop notification and Telegram. Continues even if desktop notify fails."""
         if not self.can_send_alert(alert_type):
             return  # Skip if in cooldown period
 
@@ -214,19 +195,9 @@ class NiftyTracker:
         print(f"\n🔔 ALERT: {message}")
         self.alert_cooldown[alert_type] = time.time()
 
-        if self.email_alerts:
-            email_body = f"""
-            <html>
-            <body>
-                <h2>{title}</h2>
-                <p><strong>{message}</strong></p>
-                <p>Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>
-                <hr>
-                <p style="color: #666; font-size: 12px;">Nifty 50 ETF Tracker Alert</p>
-            </body>
-            </html>
-            """
-            self.send_email_alert(title, email_body)
+        if self.telegram_alerts:
+            telegram_message = f"<b>{title}</b>\n{message}\n<i>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
+            self.send_telegram_alert(telegram_message)
     
     def check_for_dip(self, current_price, volume):
         """Check if there's a significant price dip with multiple detection methods"""

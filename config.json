@@ -17,6 +17,11 @@
         "sender_password": "",
         "receiver_email": ""
     },
+    "telegram_alerts": true,
+    "telegram_config": {
+        "bot_token": "",
+        "chat_id": ""
+    },
     "investment_config": {
         "portfolio_amount": 0,
         "target_allocation": 0.40,
