@@ -136,39 +136,63 @@ class NiftyTracker:
             return None, None
     
     def load_historical_data(self):
-        """Load 90 days of historical data for analysis"""
-        try:
-            print("📊 Loading historical data for analysis...")
-            ticker = yf.Ticker(self.symbol)
-            # Get 90 days of historical data
-            self.historical_data = ticker.history(period='90d')
-            
-            if not self.historical_data.empty:
-                # Calculate historical statistics
-                prices = self.historical_data['Close'].values
-                self.historical_stats = {
-                    'mean': float(prices.mean()),
-                    'std': float(prices.std()),
-                    'min': float(prices.min()),
-                    'max': float(prices.max()),
-                    'p25': float(self.historical_data['Close'].quantile(0.25)),  # 25th percentile
-                    'p50': float(self.historical_data['Close'].quantile(0.50)),  # Median
-                    'p75': float(self.historical_data['Close'].quantile(0.75)),  # 75th percentile
-                }
+        """Load 90 days of historical data for analysis with retry logic"""
+        max_retries = 3
+        retry_delay = 5  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                print(f"📊 Loading historical data... (Attempt {attempt + 1}/{max_retries})")
                 
-                # Calculate moving averages from historical data
-                self.historical_stats['sma_20'] = float(prices[-20:].mean()) if len(prices) >= 20 else float(prices.mean())
-                self.historical_stats['sma_50'] = float(prices[-50:].mean()) if len(prices) >= 50 else float(prices.mean())
+                # Add delay between retries to avoid rate limits
+                if attempt > 0:
+                    print(f"   Waiting {retry_delay} seconds before retry...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
                 
-                print(f"✅ Historical data loaded: 90 days")
-                print(f"   Price range: ₹{self.historical_stats['min']:.2f} - ₹{self.historical_stats['max']:.2f}")
-                print(f"   Average: ₹{self.historical_stats['mean']:.2f}")
-                print(f"   25th percentile (Good buy zone): ₹{self.historical_stats['p25']:.2f}")
-                print(f"   50-day MA: ₹{self.historical_stats['sma_50']:.2f}")
-            else:
-                print("⚠️  No historical data available")
-        except Exception as e:
-            print(f"⚠️  Error loading historical data: {e}")
+                ticker = yf.Ticker(self.symbol)
+                # Get 90 days of historical data
+                self.historical_data = ticker.history(period='90d')
+                
+                if not self.historical_data.empty:
+                    # Calculate historical statistics
+                    prices = self.historical_data['Close'].values
+                    self.historical_stats = {
+                        'mean': float(prices.mean()),
+                        'std': float(prices.std()),
+                        'min': float(prices.min()),
+                        'max': float(prices.max()),
+                        'p25': float(self.historical_data['Close'].quantile(0.25)),  # 25th percentile
+                        'p50': float(self.historical_data['Close'].quantile(0.50)),  # Median
+                        'p75': float(self.historical_data['Close'].quantile(0.75)),  # 75th percentile
+                    }
+                    
+                    # Calculate moving averages from historical data
+                    self.historical_stats['sma_20'] = float(prices[-20:].mean()) if len(prices) >= 20 else float(prices.mean())
+                    self.historical_stats['sma_50'] = float(prices[-50:].mean()) if len(prices) >= 50 else float(prices.mean())
+                    
+                    print(f"✅ Historical data loaded: 90 days")
+                    print(f"   Price range: ₹{self.historical_stats['min']:.2f} - ₹{self.historical_stats['max']:.2f}")
+                    print(f"   Average: ₹{self.historical_stats['mean']:.2f}")
+                    print(f"   25th percentile (Good buy zone): ₹{self.historical_stats['p25']:.2f}")
+                    print(f"   50-day MA: ₹{self.historical_stats['sma_50']:.2f}")
+                    return  # Success, exit the retry loop
+                else:
+                    print("⚠️  No historical data returned")
+                    
+            except Exception as e:
+                error_msg = str(e)
+                if "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
+                    print(f"⚠️  Rate limited by Yahoo Finance (Attempt {attempt + 1}/{max_retries})")
+                    if attempt < max_retries - 1:
+                        continue  # Retry
+                else:
+                    print(f"⚠️  Error loading historical data: {error_msg}")
+                    break  # Don't retry on other errors
+        
+        # If we get here, all retries failed - continue without historical data
+        print("⚠️  Could not load historical data. Tracker will use basic logic without historical analysis.")
+        print("    The tracker will still monitor prices and send alerts based on real-time movements.")
     
     def calculate_moving_average(self):
         """Calculate moving average from recent prices"""
