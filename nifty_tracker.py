@@ -6,7 +6,7 @@ Monitors Nifty 50 ETF price and sends alerts when price dips below threshold
 import yfinance as yf
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from plyer import notification
 import os
 import requests
@@ -24,11 +24,45 @@ class NiftyTracker:
         self.alert_cooldown = {}  # Prevent spam alerts
         self.daily_open_price = None
         self.consecutive_drops = 0
+        self.last_market_open_state = None
+        self.last_summary_date = None
+        self.last_reset_date = None
         
         # Historical data for smarter analysis
         self.historical_data = None
         self.historical_stats = {}
         self.load_historical_data()
+
+    def log(self, message, level="info"):
+        """Simple logger with timestamps for clearer Render logs"""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        level_tag = level.upper()
+        print(f"[{timestamp}] [{level_tag}] {message}")
+
+    def get_ist_now(self):
+        """Return current time in IST without external deps"""
+        return datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+    def is_market_open(self):
+        """NSE hours: Mon-Fri, 09:15-15:30 IST"""
+        now_ist = self.get_ist_now()
+        if now_ist.weekday() >= 5:
+            return False
+        current_time = now_ist.time()
+        return current_time >= datetime.strptime("09:15", "%H:%M").time() and \
+               current_time <= datetime.strptime("15:30", "%H:%M").time()
+
+    def _ensure_daily_reset(self):
+        """Reset intraday trackers when a new trading day starts"""
+        today_ist = self.get_ist_now().date()
+        if self.last_reset_date != today_ist:
+            self.highest_price_today = None
+            self.lowest_price_today = None
+            self.daily_open_price = None
+            self.consecutive_drops = 0
+            self.previous_price = None
+            self.last_reset_date = today_ist
+            self.log("New trading day detected - intraday stats reset")
 
     def _apply_config(self, config):
         """Apply config dict to runtime settings"""
@@ -129,10 +163,10 @@ class NiftyTracker:
                 
                 return current_price, volume
             else:
-                print("No data available")
+                self.log("No intraday data returned", level="warn")
                 return None, None
         except Exception as e:
-            print(f"Error fetching price: {e}")
+            self.log(f"Error fetching price: {e}", level="error")
             return None, None
     
     def load_historical_data(self):
@@ -142,11 +176,11 @@ class NiftyTracker:
         
         for attempt in range(max_retries):
             try:
-                print(f"📊 Loading historical data... (Attempt {attempt + 1}/{max_retries})")
+                self.log(f"📊 Loading historical data... (Attempt {attempt + 1}/{max_retries})")
                 
                 # Add delay between retries to avoid rate limits
                 if attempt > 0:
-                    print(f"   Waiting {retry_delay} seconds before retry...")
+                    self.log(f"Waiting {retry_delay} seconds before retry...", level="warn")
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 
@@ -171,28 +205,28 @@ class NiftyTracker:
                     self.historical_stats['sma_20'] = float(prices[-20:].mean()) if len(prices) >= 20 else float(prices.mean())
                     self.historical_stats['sma_50'] = float(prices[-50:].mean()) if len(prices) >= 50 else float(prices.mean())
                     
-                    print(f"✅ Historical data loaded: 90 days")
-                    print(f"   Price range: ₹{self.historical_stats['min']:.2f} - ₹{self.historical_stats['max']:.2f}")
-                    print(f"   Average: ₹{self.historical_stats['mean']:.2f}")
-                    print(f"   25th percentile (Good buy zone): ₹{self.historical_stats['p25']:.2f}")
-                    print(f"   50-day MA: ₹{self.historical_stats['sma_50']:.2f}")
+                    self.log("✅ Historical data loaded: 90 days")
+                    self.log(f"Range: ₹{self.historical_stats['min']:.2f} - ₹{self.historical_stats['max']:.2f}")
+                    self.log(f"Average: ₹{self.historical_stats['mean']:.2f}")
+                    self.log(f"25th percentile (good buy zone): ₹{self.historical_stats['p25']:.2f}")
+                    self.log(f"50-day MA: ₹{self.historical_stats['sma_50']:.2f}")
                     return  # Success, exit the retry loop
                 else:
-                    print("⚠️  No historical data returned")
+                    self.log("⚠️  No historical data returned", level="warn")
                     
             except Exception as e:
                 error_msg = str(e)
                 if "rate limit" in error_msg.lower() or "too many requests" in error_msg.lower():
-                    print(f"⚠️  Rate limited by Yahoo Finance (Attempt {attempt + 1}/{max_retries})")
+                    self.log(f"⚠️  Rate limited by Yahoo Finance (Attempt {attempt + 1}/{max_retries})", level="warn")
                     if attempt < max_retries - 1:
                         continue  # Retry
                 else:
-                    print(f"⚠️  Error loading historical data: {error_msg}")
+                    self.log(f"⚠️  Error loading historical data: {error_msg}", level="error")
                     break  # Don't retry on other errors
         
         # If we get here, all retries failed - continue without historical data
-        print("⚠️  Could not load historical data. Tracker will use basic logic without historical analysis.")
-        print("    The tracker will still monitor prices and send alerts based on real-time movements.")
+        self.log("⚠️  Could not load historical data. Tracker will use basic logic without historical analysis.", level="warn")
+        self.log("Tracker will still monitor prices and send alerts based on real-time movements.")
     
     def calculate_moving_average(self):
         """Calculate moving average from recent prices"""
@@ -232,6 +266,55 @@ class NiftyTracker:
         return time_since_last >= cooldown_seconds
     
     
+    def _build_sparkline(self, samples):
+        """Tiny ASCII sparkline for trend context in Telegram"""
+        if not samples or len(samples) < 3:
+            return "trend: n/a"
+        levels = ['.', ':', '-', '=', '^']
+        min_p, max_p = min(samples), max(samples)
+        if max_p == min_p:
+            return "-" * len(samples)
+        spark = ""
+        for price in samples:
+            norm = (price - min_p) / (max_p - min_p)
+            idx = int(norm * (len(levels) - 1))
+            spark += levels[idx]
+        return spark
+
+    def _format_telegram_message(self, title, base_message):
+        """Add quick stats, trend, and sparkline to Telegram message"""
+        current_price = self.price_history[-1] if self.price_history else None
+        prev_price = self.previous_price
+        moving_avg = self.calculate_moving_average()
+        percentile = self.get_price_percentile(current_price) if current_price else None
+        sma_50 = self.historical_stats.get('sma_50') if self.historical_stats else None
+        sparkline = self._build_sparkline(self.price_history[-10:]) if self.price_history else ""
+
+        stats_lines = []
+        if current_price is not None and prev_price:
+            delta = current_price - prev_price
+            delta_pct = (delta / prev_price) * 100
+            stats_lines.append(f"Price: ₹{current_price:.2f} ({delta:+.2f}, {delta_pct:+.2f}%)")
+        elif current_price is not None:
+            stats_lines.append(f"Price: ₹{current_price:.2f}")
+
+        if moving_avg:
+            ma_diff_pct = ((current_price - moving_avg) / moving_avg) * 100 if current_price else 0
+            stats_lines.append(f"MA({self.moving_avg_period}): ₹{moving_avg:.2f} ({ma_diff_pct:+.2f}%)")
+
+        if sma_50 and current_price:
+            sma50_diff_pct = ((current_price - sma_50) / sma_50) * 100
+            stats_lines.append(f"50d MA: ₹{sma_50:.2f} ({sma50_diff_pct:+.2f}%)")
+
+        if percentile is not None:
+            stats_lines.append(f"90d Percentile: {percentile}%")
+
+        stats_lines.append(f"Trend: {sparkline}")
+
+        footer = "\n".join(stats_lines)
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return f"<b>{title}</b>\n{base_message}\n\n{footer}\n<i>{timestamp}</i>"
+
     def send_telegram_alert(self, message):
         """Send Telegram alert via bot API"""
         if not self.telegram_alerts:
@@ -242,7 +325,7 @@ class NiftyTracker:
             chat_id = self.telegram_config.get('chat_id')
             
             if not all([bot_token, chat_id]):
-                print("Telegram not configured (missing bot_token or chat_id)")
+                self.log("Telegram not configured (missing bot_token or chat_id)", level="warn")
                 return
             
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -255,13 +338,13 @@ class NiftyTracker:
             response = requests.post(url, json=payload, timeout=10)
             response.raise_for_status()
             
-            print(f"💬 Telegram sent: {message[:50]}...")
+            self.log(f"Telegram sent: {message[:60]}...")
         except Exception as e:
-            print(f"Telegram error: {e}")
-    
-    def send_alert(self, message, title="Nifty 50 ETF Alert", alert_type="general"):
+            self.log(f"Telegram error: {e}", level="error")
+
+    def send_alert(self, message, title="Nifty 50 ETF Alert", alert_type="general", force=False):
         """Send desktop notification and Telegram. Continues even if desktop notify fails."""
-        if not self.can_send_alert(alert_type):
+        if not force and not self.can_send_alert(alert_type):
             return  # Skip if in cooldown period
 
         # Try desktop notification unless headless; do not block email if it fails
@@ -277,12 +360,48 @@ class NiftyTracker:
                 print(f"Desktop alert unavailable: {e}")
 
         # Always log and proceed with email
-        print(f"\n🔔 ALERT: {message}")
+        self.log(f"🔔 ALERT: {message}")
         self.alert_cooldown[alert_type] = time.time()
 
         if self.telegram_alerts:
-            telegram_message = f"<b>{title}</b>\n{message}\n<i>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
+            telegram_message = self._format_telegram_message(title, message)
             self.send_telegram_alert(telegram_message)
+
+    def send_daily_summary_if_needed(self):
+        """Send end-of-day summary once after market close"""
+        today = self.get_ist_now().date()
+        if self.last_summary_date == today:
+            return
+        if not self.price_history:
+            return
+        if self.daily_open_price is None:
+            return
+
+        close_price = self.price_history[-1]
+        high = self.highest_price_today or close_price
+        low = self.lowest_price_today or close_price
+        day_change = close_price - self.daily_open_price
+        day_change_pct = (day_change / self.daily_open_price) * 100 if self.daily_open_price else 0
+        percentile = self.get_price_percentile(close_price)
+
+        summary_lines = [
+            f"Open: ₹{self.daily_open_price:.2f}",
+            f"Close: ₹{close_price:.2f} ({day_change:+.2f}, {day_change_pct:+.2f}%)",
+            f"High / Low: ₹{high:.2f} / ₹{low:.2f}",
+        ]
+
+        moving_avg = self.calculate_moving_average()
+        if moving_avg:
+            ma_diff_pct = ((close_price - moving_avg) / moving_avg) * 100
+            summary_lines.append(f"MA({self.moving_avg_period}): ₹{moving_avg:.2f} ({ma_diff_pct:+.2f}%)")
+
+        if percentile is not None:
+            summary_lines.append(f"90d Percentile: {percentile}%")
+
+        message = "📅 DAILY SUMMARY\n" + "\n".join(summary_lines)
+        self.send_alert(message, title="Market Close Summary", alert_type="daily_summary", force=True)
+        self.last_summary_date = today
+        self.log("Daily summary sent")
     
     def check_for_dip(self, current_price, volume):
         """Check for price dips using historical data - realistic for Indian market"""
@@ -558,19 +677,35 @@ class NiftyTracker:
     
     def run(self):
         """Main tracking loop"""
-        print(f"\n🚀 Starting Nifty 50 ETF Tracker (Long-Term Investment Mode)")
-        print(f"Symbol: {self.symbol}")
-        print(f"Check Interval: {self.check_interval} seconds")
-        print(f"Buy Signal Threshold: {self.dip_from_high}% dip from high")
-        print(f"Strong Buy: 3%+ below moving average")
-        print(f"Portfolio: ₹{self.portfolio_amount:,.0f} | Target Allocation: {self.target_allocation*100:.0f}%")
-        print(f"\nWaiting for buying opportunities...\n")
-        print(f"Press Ctrl+C to stop\n")
+        self.log("🚀 Starting Nifty 50 ETF Tracker (Long-Term Investment Mode)")
+        self.log(f"Symbol: {self.symbol}")
+        self.log(f"Check Interval: {self.check_interval} seconds")
+        self.log(f"Buy Signal Threshold: {self.dip_from_high}% dip from high")
+        self.log(f"Strong Buy: 3%+ below moving average")
+        self.log(f"Portfolio: ₹{self.portfolio_amount:,.0f} | Target Allocation: {self.target_allocation*100:.0f}%")
+        self.log("Waiting for buying opportunities...")
+        self.log("Press Ctrl+C to stop")
         
         try:
             while True:
                 # Hot-reload config so you can edit config.json while running
                 self.reload_config_if_changed()
+
+                # Reset intraday markers on new trading day
+                self._ensure_daily_reset()
+
+                market_open = self.is_market_open()
+                if not market_open:
+                    if self.last_market_open_state is None or self.last_market_open_state:
+                        self.log(f"Market closed (IST {self.get_ist_now().strftime('%H:%M')}); polling paused")
+                        self.send_daily_summary_if_needed()
+                    self.last_market_open_state = market_open
+                    time.sleep(self.check_interval)
+                    continue
+                else:
+                    if self.last_market_open_state is False:
+                        self.log("Market open - resuming polling")
+                    self.last_market_open_state = market_open
 
                 current_price, volume = self.get_current_price()
                 
@@ -586,15 +721,15 @@ class NiftyTracker:
                     # Update previous price
                     self.previous_price = current_price
                 else:
-                    print(f"Failed to fetch price at {datetime.now().strftime('%H:%M:%S')}")
+                    self.log(f"Failed to fetch price at {datetime.now().strftime('%H:%M:%S')}", level="warn")
                 
                 # Wait before next check
                 time.sleep(self.check_interval)
                 
         except KeyboardInterrupt:
-            print("\n\n👋 Tracker stopped by user")
+            self.log("👋 Tracker stopped by user")
         except Exception as e:
-            print(f"\n❌ Error: {e}")
+            self.log(f"❌ Error: {e}", level="error")
 
 def main():
     """Main entry point"""
