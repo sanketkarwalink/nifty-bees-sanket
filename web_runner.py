@@ -1,13 +1,13 @@
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from multi_etf_tracker import MultiETFTracker
+from nifty_tracker import NiftyTracker
 
 PORT = int(os.getenv("PORT", "10000"))
 
 
 def start_tracker():
-    tracker = MultiETFTracker()
+    tracker = NiftyTracker()
     tracker.run()
 
 
