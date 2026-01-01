@@ -1,14 +1,30 @@
 # Nifty 50 ETF Price Tracker 📊
 
-A Python application that tracks Nifty 50 ETF prices in real-time and sends desktop notifications when significant price dips are detected.
+A Python application that tracks Indian ETF prices with smart buy signals for long-term investing.
+
+## 🎯 Two Tracking Modes
+
+### 1. Single ETF Tracker (nifty_tracker.py)
+- Track one ETF with deep historical analysis
+- 90-day historical data with value zones
+- 3 smart buy strategies
+- Detailed investment recommendations
+
+### 2. Multi-ETF Tracker (multi_etf_tracker.py) ⭐ NEW!
+- Track multiple ETFs simultaneously
+- Compare opportunities across ETFs
+- Unified dashboard with all prices
+- Get alerts for the best opportunities
+- Perfect for portfolio management
 
 ## Features ✨
 
-- **Real-time Price Monitoring**: Tracks Nifty 50 ETF (NIFTYBEES) prices using Yahoo Finance
-- **Dip Alerts**: Desktop notifications when price drops by a configurable percentage
-- **Daily High Tracking**: Monitors drops from the day's highest price
-- **Customizable Settings**: Easy configuration through JSON file
-- **Live Status Display**: Terminal dashboard showing current price, changes, and statistics
+- **90-Day Historical Analysis**: Calculate price percentiles and identify value zones
+- **Smart Buy Signals**: 3 data-driven strategies for finding entry points
+- **Telegram Alerts**: Get actionable buy/sell signals on your phone
+- **Investment Recommendations**: Exact amounts to invest based on your portfolio
+- **Multi-ETF Comparison**: See all opportunities side-by-side
+- **Rate Limit Handling**: Robust retry logic for Yahoo Finance API
 
 ## Installation 🚀
 
@@ -28,26 +44,57 @@ A Python application that tracks Nifty 50 ETF prices in real-time and sends desk
    pip install -r requirements.txt
    ```
 
+## Quick Start 🚀
+
+### Option 1: Interactive Runner (Easiest)
+```bash
+./run_tracker.sh
+```
+Choose between single or multi-ETF tracking!
+
+### Option 2: Run Directly
+
+**Single ETF Tracker:**
+```bash
+python3 nifty_tracker.py
+```
+
+**Multi-ETF Tracker:**
+```bash
+python3 multi_etf_tracker.py
+```
+
 ## Configuration ⚙️
 
-Edit `config.json` to customize the tracker:
-
+### Single ETF (config.json)
 ```json
 {
-    "symbol": "NIFTYBEES.NS",        // ETF symbol to track
-    "check_interval": 60,             // Check price every 60 seconds
-    "dip_percentage": 1.0,            // Alert on 1% dip from last check
-    "dip_from_high": 2.0,             // Alert on 2% dip from today's high
-    "alert_sound": true               // Enable notification sound
+    "symbol": "NIFTYBEES.NS",
+    "check_interval": 60,
+    "dip_from_high": 1.0,
+    "moving_avg_period": 20,
+    "alert_cooldown_minutes": 30,
+    "telegram_alerts": true,
+    "investment_config": {
+        "portfolio_amount": 100000,
+        "target_allocation": 0.20,
+        "buy_on_dip": 1.5,
+        "sell_on_spike": 4.0
+    }
 }
 ```
 
-### Configuration Options
-
-- **symbol**: Yahoo Finance ticker symbol (default: NIFTYBEES.NS)
-- **check_interval**: Seconds between price checks (default: 60)
-- **dip_percentage**: Minimum % drop to trigger alert (default: 1.0%)
-- **dip_from_high**: % drop from today's high to trigger alert (default: 2.0%)
+### Multi-ETF (config.json)
+```json
+{
+    "etf_symbols": [
+        {"symbol": "NIFTYBEES.NS", "name": "Nifty 50", "allocation": 0.15},
+        {"symbol": "JUNIORBEES.NS", "name": "Nifty Next 50", "allocation": 0.10},
+        {"symbol": "BANKBEES.NS", "name": "Bank Nifty", "allocation": 0.15}
+    ],
+    ... (same settings as single ETF)
+}
+```
 - **alert_sound**: Enable/disable notification sounds
 
 ### Alternative ETF Symbols
