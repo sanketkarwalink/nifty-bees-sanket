@@ -23,25 +23,18 @@ class MultiETFTracker:
             print(f"Initializing {symbol_info['name']} ({symbol})")
             print(f"{'='*60}")
             
-            # Create config for this ETF
-            etf_config = self.base_config.copy()
-            etf_config['symbol'] = symbol
-            etf_config['investment_config']['target_allocation'] = symbol_info['allocation']
+            # Create a single tracker instance for this symbol
+            # We'll patch it to use the specific symbol
+            tracker = NiftyTracker(self.config_file)
+            tracker.symbol = symbol  # Override symbol
             
-            # Save temporary config
-            temp_config = f"temp_{symbol}.json"
-            with open(temp_config, 'w') as f:
-                json.dump(etf_config, f)
-            
-            # Create tracker
             self.trackers[symbol] = {
-                'tracker': NiftyTracker(temp_config),
+                'tracker': tracker,
                 'name': symbol_info['name'],
-                'allocation': symbol_info['allocation'],
-                'temp_config': temp_config
+                'allocation': symbol_info['allocation']
             }
             
-            time.sleep(3)  # Avoid rate limits
+            time.sleep(2)  # Avoid rate limits
         
         print(f"\n{'='*60}")
         print(f"✅ All ETFs initialized")
@@ -230,14 +223,7 @@ class MultiETFTracker:
                 
         except KeyboardInterrupt:
             print("\\n\\n👋 Multi-ETF Tracker stopped")
-        finally:
-            # Cleanup temp configs
-            import os
-            for data in self.trackers.values():
-                try:
-                    os.remove(data['temp_config'])
-                except:
-                    pass
+
 
 def main():
     """Main entry point"""
