@@ -128,7 +128,7 @@ class MultiETFTracker:
         return opportunities
     
     def send_comparison_alert(self, opportunities):
-        \"\"\"Send Telegram alert comparing all opportunities\"\"\"
+        """Send Telegram alert comparing all opportunities"""
         if not opportunities:
             return
         
@@ -160,7 +160,7 @@ class MultiETFTracker:
         first_tracker.send_alert(message, "Multi-ETF Comparison", "etf_comparison")
     
     def display_dashboard(self, prices):
-        \"\"\"Display comparison dashboard\"\"\"
+        """Display comparison dashboard"""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         print(f"\\n{'='*80}")
@@ -202,7 +202,7 @@ class MultiETFTracker:
         print()
     
     def run(self):
-        \"\"\"Main tracking loop for all ETFs\"\"\"
+        """Main tracking loop for all ETFs"""
         print(f"\\n🚀 Starting Multi-ETF Tracker")
         print(f"Tracking {len(self.trackers)} ETFs")
         print(f"Check Interval: {self.base_config.get('check_interval', 60)} seconds\\n")
@@ -240,7 +240,7 @@ class MultiETFTracker:
                     pass
 
 def main():
-    \"\"\"Main entry point\"\"\"
+    """Main entry point"""
     tracker = MultiETFTracker()
     tracker.run()
 
