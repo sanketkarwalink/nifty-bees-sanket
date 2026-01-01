@@ -24,6 +24,11 @@ class NiftyTracker:
         self.alert_cooldown = {}  # Prevent spam alerts
         self.daily_open_price = None
         self.consecutive_drops = 0
+        
+        # Historical data for smarter analysis
+        self.historical_data = None
+        self.historical_stats = {}
+        self.load_historical_data()
 
     def _apply_config(self, config):
         """Apply config dict to runtime settings"""
@@ -81,24 +86,24 @@ class NiftyTracker:
             config = {
                 'symbol': 'NIFTYBEES.NS',  # Nifty 50 ETF (NIFTY BeES)
                 'check_interval': 60,  # Check every 60 seconds
-                'dip_percentage': 1.0,  # Alert on 1% dip
-                'dip_from_high': 2.0,  # Alert when price drops 2% from today's high
+                'dip_percentage': 0.7,  # Alert on 0.7% dip (realistic for Indian market)
+                'dip_from_high': 1.0,  # Alert on 1%+ dip from today's high (more frequent opportunities)
                 'alert_sound': True,
                 'headless': False,  # Skip desktop notifications on servers
-                'moving_avg_period': 5,  # Moving average period
+                'moving_avg_period': 20,  # 20-period MA (more stable for daily tracking)
                 'volume_spike_threshold': 1.5,  # Volume spike multiplier
                 'consecutive_drop_threshold': 3,  # Alert after N consecutive drops
-                'alert_cooldown_minutes': 5,  # Minutes between same alert types
+                'alert_cooldown_minutes': 30,  # 30 minutes between alerts (reduce noise)
                 'telegram_alerts': True,
                 'telegram_config': {
                     'bot_token': '',
                     'chat_id': ''
                 },
                 'investment_config': {
-                    'portfolio_amount': 100000,  # Current investment amount
+                    'portfolio_amount': 100000,  # Total portfolio value
                     'target_allocation': 0.20,  # 20% of portfolio in this ETF
-                    'buy_on_dip': 2.0,  # Buy signal when 2% below MA
-                    'sell_on_spike': 3.0  # Sell signal when 3% above MA
+                    'buy_on_dip': 1.5,  # BUY signal when 1.5% below MA (realistic for India)
+                    'sell_on_spike': 4.0  # SELL signal when 4% above MA (take profits)
                 }
             }
             # Save default config
@@ -130,12 +135,68 @@ class NiftyTracker:
             print(f"Error fetching price: {e}")
             return None, None
     
+    def load_historical_data(self):
+        """Load 90 days of historical data for analysis"""
+        try:
+            print("📊 Loading historical data for analysis...")
+            ticker = yf.Ticker(self.symbol)
+            # Get 90 days of historical data
+            self.historical_data = ticker.history(period='90d')
+            
+            if not self.historical_data.empty:
+                # Calculate historical statistics
+                prices = self.historical_data['Close'].values
+                self.historical_stats = {
+                    'mean': float(prices.mean()),
+                    'std': float(prices.std()),
+                    'min': float(prices.min()),
+                    'max': float(prices.max()),
+                    'p25': float(self.historical_data['Close'].quantile(0.25)),  # 25th percentile
+                    'p50': float(self.historical_data['Close'].quantile(0.50)),  # Median
+                    'p75': float(self.historical_data['Close'].quantile(0.75)),  # 75th percentile
+                }
+                
+                # Calculate moving averages from historical data
+                self.historical_stats['sma_20'] = float(prices[-20:].mean()) if len(prices) >= 20 else float(prices.mean())
+                self.historical_stats['sma_50'] = float(prices[-50:].mean()) if len(prices) >= 50 else float(prices.mean())
+                
+                print(f"✅ Historical data loaded: 90 days")
+                print(f"   Price range: ₹{self.historical_stats['min']:.2f} - ₹{self.historical_stats['max']:.2f}")
+                print(f"   Average: ₹{self.historical_stats['mean']:.2f}")
+                print(f"   25th percentile (Good buy zone): ₹{self.historical_stats['p25']:.2f}")
+                print(f"   50-day MA: ₹{self.historical_stats['sma_50']:.2f}")
+            else:
+                print("⚠️  No historical data available")
+        except Exception as e:
+            print(f"⚠️  Error loading historical data: {e}")
+    
     def calculate_moving_average(self):
         """Calculate moving average from recent prices"""
         if len(self.price_history) < self.moving_avg_period:
             return None
         recent_prices = self.price_history[-self.moving_avg_period:]
         return sum(recent_prices) / len(recent_prices)
+    
+    def get_price_percentile(self, current_price):
+        """Calculate where current price stands in historical range (0-100)"""
+        if not self.historical_stats:
+            return None
+        
+        price_min = self.historical_stats['min']
+        price_max = self.historical_stats['max']
+        
+        if price_max == price_min:
+            return 50
+        
+        percentile = ((current_price - price_min) / (price_max - price_min)) * 100
+        return round(percentile, 1)
+    
+    def is_in_value_zone(self, current_price):
+        """Check if price is in historical value zone (bottom 30%)"""
+        percentile = self.get_price_percentile(current_price)
+        if percentile is None:
+            return False
+        return percentile <= 30  # Bottom 30% of historical range
     
     def can_send_alert(self, alert_type):
         """Check if alert cooldown period has passed"""
@@ -200,77 +261,106 @@ class NiftyTracker:
             self.send_telegram_alert(telegram_message)
     
     def check_for_dip(self, current_price, volume):
-        """Check if there's a significant price dip with multiple detection methods"""
+        """Check for price dips using historical data - realistic for Indian market"""
         alerts = []
         
         # Add to price history
         self.price_history.append(current_price)
-        if len(self.price_history) > 20:  # Keep last 20 prices
+        if len(self.price_history) > 50:
             self.price_history.pop(0)
         
-        # Update highest and lowest price
+        # Update today's high and low
         if self.highest_price_today is None or current_price > self.highest_price_today:
             self.highest_price_today = current_price
         
         if self.lowest_price_today is None or current_price < self.lowest_price_today:
             self.lowest_price_today = current_price
         
-        # 1. Check dip from previous price
+        # Track consecutive drops
         if self.previous_price is not None:
-            price_change_pct = ((current_price - self.previous_price) / self.previous_price) * 100
-            
-            # Track consecutive drops
-            if price_change_pct < 0:
+            if current_price < self.previous_price:
                 self.consecutive_drops += 1
             else:
                 self.consecutive_drops = 0
-            
-            if price_change_pct <= -self.dip_percentage:
-                if self.can_send_alert('price_dip'):
-                    alerts.append((
-                        f"⚠️ Sharp Drop: {abs(price_change_pct):.2f}% to ₹{current_price:.2f}",
-                        "price_dip"
-                    ))
         
-        # 2. Check dip from today's high
-        if self.highest_price_today is not None:
+        # Get investment recommendation
+        recommendation = self.get_investment_recommendation(current_price)
+        if not recommendation:
+            return alerts
+        
+        # Get historical context
+        percentile = self.get_price_percentile(current_price)
+        in_value_zone = self.is_in_value_zone(current_price)
+        
+        # STRATEGY 1: Price in historical value zone (bottom 30% of 90-day range)
+        if in_value_zone and self.can_send_alert('value_zone'):
+            if recommendation['signal'] in ['STRONG BUY', 'BUY']:
+                message = f"💎 VALUE ZONE ALERT 💎\n\n"
+                message += f"Price in bottom 30% of 90-day range!\n"
+                message += f"Current: ₹{current_price:.2f} (Percentile: {percentile}%)\n"
+                if self.historical_stats:
+                    message += f"90-day range: ₹{self.historical_stats['min']:.2f} - ₹{self.historical_stats['max']:.2f}\n"
+                    message += f"90-day average: ₹{self.historical_stats['mean']:.2f}\n\n"
+                
+                message += f"💰 {recommendation['strength']} {recommendation['signal']}\n\n"
+                message += f"🎯 ACTION TO TAKE:\n"
+                for rec in recommendation['recommendations']:
+                    message += f"• {rec}\n"
+                message += f"\n📊 Analysis:\n"
+                for reason in recommendation['reasoning']:
+                    message += f"• {reason}\n"
+                message += f"\n⏰ This is a statistically good entry point!"
+                
+                alerts.append((message, "value_zone"))
+        
+        # STRATEGY 2: Dip from today's high + Below 50-day MA
+        if self.highest_price_today is not None and self.historical_stats:
             dip_from_high_pct = ((current_price - self.highest_price_today) / self.highest_price_today) * 100
+            sma_50 = self.historical_stats.get('sma_50')
             
-            if dip_from_high_pct <= -self.dip_from_high:
-                if self.can_send_alert('high_dip'):
-                    alerts.append((
-                        f"📉 Down {abs(dip_from_high_pct):.2f}% from high ₹{self.highest_price_today:.2f}",
-                        "high_dip"
-                    ))
+            # Alert on 1%+ dip from high AND price below 50-day MA
+            if (dip_from_high_pct <= -self.dip_from_high and 
+                sma_50 and current_price < sma_50 and 
+                self.can_send_alert('dip_opportunity')):
+                
+                if recommendation['signal'] in ['STRONG BUY', 'BUY']:
+                    below_sma = ((current_price - sma_50) / sma_50) * 100
+                    
+                    message = f"🎯 DIP + TREND SIGNAL 🎯\n\n"
+                    message += f"✓ Dipped {abs(dip_from_high_pct):.2f}% from today's high\n"
+                    message += f"✓ Below 50-day MA by {abs(below_sma):.2f}%\n\n"
+                    message += f"Current: ₹{current_price:.2f}\n"
+                    message += f"Today's High: ₹{self.highest_price_today:.2f}\n"
+                    message += f"50-day MA: ₹{sma_50:.2f}\n\n"
+                    
+                    message += f"💰 {recommendation['strength']} {recommendation['signal']}\n\n"
+                    message += f"🎯 RECOMMENDED ACTION:\n"
+                    for rec in recommendation['recommendations']:
+                        message += f"• {rec}\n"
+                    message += f"\n📊 Why buy now:\n"
+                    for reason in recommendation['reasoning']:
+                        message += f"• {reason}\n"
+                    
+                    alerts.append((message, "dip_opportunity"))
         
-        # 3. Check if below moving average with significant gap
-        moving_avg = self.calculate_moving_average()
-        if moving_avg is not None:
-            ma_diff_pct = ((current_price - moving_avg) / moving_avg) * 100
-            if ma_diff_pct <= -1.5:  # More than 1.5% below MA
-                if self.can_send_alert('ma_breach'):
-                    alerts.append((
-                        f"📊 Below {self.moving_avg_period}-period MA by {abs(ma_diff_pct):.2f}%",
-                        "ma_breach"
-                    ))
-        
-        # 4. Check consecutive drops pattern
-        if self.consecutive_drops >= self.consecutive_drop_threshold:
-            if self.can_send_alert('consecutive_drops'):
-                alerts.append((
-                    f"⬇️ Downtrend Alert: {self.consecutive_drops} consecutive drops",
-                    "consecutive_drops"
-                ))
-        
-        # 5. Check drop from daily open
-        if self.daily_open_price is not None:
-            open_change_pct = ((current_price - self.daily_open_price) / self.daily_open_price) * 100
-            if open_change_pct <= -3.0:  # More than 3% down from open
-                if self.can_send_alert('open_drop'):
-                    alerts.append((
-                        f"📍 Day Performance: {open_change_pct:.2f}% from open ₹{self.daily_open_price:.2f}",
-                        "open_drop"
-                    ))
+        # STRATEGY 3: Strong buy - price near 90-day low
+        if self.historical_stats and self.can_send_alert('near_low'):
+            price_min = self.historical_stats['min']
+            distance_from_low_pct = ((current_price - price_min) / price_min) * 100
+            
+            # Alert if within 2% of 90-day low
+            if distance_from_low_pct <= 2.0 and recommendation['signal'] == 'STRONG BUY':
+                message = f"🔥 NEAR 90-DAY LOW 🔥\n\n"
+                message += f"Price is only {distance_from_low_pct:.2f}% above 90-day low!\n"
+                message += f"Current: ₹{current_price:.2f}\n"
+                message += f"90-day Low: ₹{price_min:.2f}\n\n"
+                message += f"💰 {recommendation['strength']} {recommendation['signal']}\n\n"
+                message += f"⚡ STRONG BUY RECOMMENDATION:\n"
+                for rec in recommendation['recommendations']:
+                    message += f"• {rec}\n"
+                message += f"\n🎯 Excellent long-term entry point!"
+                
+                alerts.append((message, "near_low"))
         
         return alerts
 
@@ -412,6 +502,17 @@ class NiftyTracker:
             ma_symbol = "⬆️" if ma_diff >= 0 else "⬇️"
             status += f"MA({self.moving_avg_period}): {ma_symbol} ₹{moving_avg:.2f} ({ma_diff_pct:+.2f}%)\n"
         
+        # Historical context
+        if self.historical_stats:
+            percentile = self.get_price_percentile(current_price)
+            sma_50 = self.historical_stats.get('sma_50', 0)
+            if percentile:
+                zone = "🟢 BUY ZONE" if percentile <= 30 else "🟡 FAIR" if percentile <= 70 else "🔴 HIGH"
+                status += f"90-day Percentile: {percentile}% {zone}\n"
+            if sma_50:
+                sma50_diff_pct = ((current_price - sma_50) / sma_50) * 100
+                status += f"50-day MA: ₹{sma_50:.2f} ({sma50_diff_pct:+.2f}%)\n"
+        
         # Consecutive drops indicator
         if self.consecutive_drops > 0:
             status += f"Consecutive Drops: {self.consecutive_drops} {'🔴' if self.consecutive_drops >= self.consecutive_drop_threshold else ''}\n"
@@ -433,12 +534,14 @@ class NiftyTracker:
     
     def run(self):
         """Main tracking loop"""
-        print(f"\n🚀 Starting Nifty 50 ETF Tracker")
+        print(f"\n🚀 Starting Nifty 50 ETF Tracker (Long-Term Investment Mode)")
         print(f"Symbol: {self.symbol}")
         print(f"Check Interval: {self.check_interval} seconds")
-        print(f"Dip Alert Threshold: {self.dip_percentage}%")
-        print(f"High Dip Alert Threshold: {self.dip_from_high}%")
-        print(f"\nPress Ctrl+C to stop\n")
+        print(f"Buy Signal Threshold: {self.dip_from_high}% dip from high")
+        print(f"Strong Buy: 3%+ below moving average")
+        print(f"Portfolio: ₹{self.portfolio_amount:,.0f} | Target Allocation: {self.target_allocation*100:.0f}%")
+        print(f"\nWaiting for buying opportunities...\n")
+        print(f"Press Ctrl+C to stop\n")
         
         try:
             while True:
